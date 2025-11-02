@@ -6,6 +6,7 @@ import HeroSlider from "./Components/HeroSlider";
 import GreenTracker from "./Pages/GreenTracker";
 import Flow from "./Pages/Flow";
 import ErrorBoundary from "./Components/ErrorBoundary";
+import InstallPrompt from "./Components/InstallPrompt";
 import "./index.css";
 import { ThemeProvider, useTheme } from "./theme/ThemeProvider";
 
@@ -41,6 +42,7 @@ function PageFrame() {
         </AnimatePresence>
       </main>
       <Footer />
+      <InstallPrompt />
     </div>
   );
 }

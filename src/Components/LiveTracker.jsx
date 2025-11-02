@@ -2,17 +2,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { haversineDistance, detectModeFromSpeed, computeEmissions } from "../utils/footprint";
-import { io } from "socket.io-client";
+import { saveSnapshotToFirestore } from "../firebase";
 
 /**
  * LiveTracker
  * - uses browser geolocation
- * - connects to socket server for real-time updates
- * - on Stop -> saves via socket server to Firebase (if configured) and also stores locally
+ * - on Stop -> saves to Firebase and stores locally
  * - shows toasts for success/failure
  */
-
-const SOCKET_URL = (import.meta?.env?.VITE_SOCKET_URL) || "http://localhost:4000";
 
 function formatTime(sec) {
   const s = Math.floor(sec % 60).toString().padStart(2, "0");
@@ -31,44 +28,10 @@ export default function LiveTracker({ initialMode = "car", onApplyLive }) {
   const [pauseOffsetSec, setPauseOffsetSec] = useState(0);
   const [lastTick, setLastTick] = useState(null);
   const [toast, setToast] = useState(null);
-  const [socketConnected, setSocketConnected] = useState(false);
   const [savingState, setSavingState] = useState(null); // null | "saving" | "ok" | "err"
 
   const watchIdRef = useRef(null);
   const timerRef = useRef(null);
-  const socketRef = useRef(null);
-
-  // Initialize socket connection
-  useEffect(() => {
-    socketRef.current = io(SOCKET_URL, { 
-      transports: ["websocket"], 
-      autoConnect: true,
-      timeout: 5000,
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
-    });
-    
-    socketRef.current.on("connect", () => {
-      setSocketConnected(true);
-      console.log("Connected to server");
-    });
-    
-    socketRef.current.on("disconnect", () => {
-      setSocketConnected(false);
-      console.log("Disconnected from server");
-    });
-    
-    socketRef.current.on("connect_error", (err) => {
-      console.warn("Socket connect_error:", err.message);
-      setSocketConnected(false);
-    });
-    
-    return () => {
-      socketRef.current?.disconnect();
-      socketRef.current = null;
-    };
-  }, []);
 
   const durationSec = startTs ? Math.max(0, Math.floor(((lastTick ?? Date.now()) - startTs) / 1000) - pauseOffsetSec) : 0;
   const avgSpeed = durationSec > 0 ? distanceMeters / durationSec : 0; // m/s
@@ -216,39 +179,18 @@ export default function LiveTracker({ initialMode = "car", onApplyLive }) {
       console.warn("local persist failed", e);
     }
 
-    // Save via socket server to Firebase (if configured)
+    // Save to Firebase (if configured)
     if (finalApply) {
       setSavingState("saving");
       try {
-        // Send snapshot to server via socket
-        socketRef.current?.emit('live:stop', snapshot);
-        
-        // Listen for server response
-        socketRef.current?.once('live:stop:ack', (response) => {
-          if (response.ok) {
-            setSavingState("ok");
-            setToast("Snapshot saved to server");
-            setTimeout(() => setToast(null), 2000);
-          } else {
-            setSavingState("err");
-            setToast("Failed to save to server — saved locally");
-            setTimeout(() => setToast(null), 2500);
-          }
-        });
-        
-        // Timeout after 5 seconds if no response
-        setTimeout(() => {
-          if (savingState === "saving") {
-            setSavingState("err");
-            setToast("Server timeout — saved locally");
-            setTimeout(() => setToast(null), 2500);
-          }
-        }, 5000);
-        
+        await saveSnapshotToFirestore(snapshot);
+        setSavingState("ok");
+        setToast("Snapshot saved successfully");
+        setTimeout(() => setToast(null), 2000);
       } catch (err) {
-        console.warn("Socket emit error", err);
+        console.warn("Firebase save error", err);
         setSavingState("err");
-        setToast("Failed to save to server — saved locally");
+        setToast("Failed to save — saved locally only");
         setTimeout(() => setToast(null), 2500);
       }
 
@@ -322,11 +264,6 @@ export default function LiveTracker({ initialMode = "car", onApplyLive }) {
         </div>
 
         <div className="flex items-center gap-2 relative">
-          {/* Socket connection status */}
-          <div className={`px-2 py-1 rounded text-xs ${socketConnected ? "bg-emerald-400 text-slate-900" : "bg-red-400 text-white"}`}>
-            {socketConnected ? "Connected" : "Offline"}
-          </div>
-          
           <div className="relative">
             {/* pulsing status ring */}
             <motion.div
